@@ -4,6 +4,8 @@ import pandas as pd
 import time
 import re
 from typing import List, Dict, Optional
+from lxml import etree
+import unicodedata
 
 class EmpregosMaringaScraper:
     """
@@ -18,53 +20,40 @@ class EmpregosMaringaScraper:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         })
     
+    def fix_encoding(self, text: str) -> str:
+        """
+        Corrige problemas de codificação como 'MaringÃ¡' para 'Maringá'
+        """
+        if not text:
+            return text
+        
+        # Tenta corrigir codificação comum
+        try:
+            # Se o texto contém caracteres mal codificados, tenta recodificar
+            if 'Ã¡' in text or 'Ã£' in text or 'Ã§' in text:
+                # Tenta converter de Latin-1 para UTF-8
+                text_bytes = text.encode('latin-1')
+                text = text_bytes.decode('utf-8')
+            return text
+        except:
+            # Se falhar, tenta outras abordagens
+            try:
+                # Tenta normalizar caracteres Unicode
+                text = unicodedata.normalize('NFKC', text)
+                return text
+            except:
+                return text
+    
     def extract_vaga_data(self, vaga_element) -> Optional[Dict]:
         """
         Extrai os dados de um único elemento de vaga.
         Adaptado para funcionar com a estrutura observada no site.
         """
         try:
-            # Tenta encontrar o título da vaga
-            titulo_elem = vaga_element.find('div', class_='d-flex flex-column flex-md-row')
-            titulo = titulo_elem.get_text(strip=True) if titulo_elem else "N/A"
-            
             # Tenta encontrar a empresa
             empresa_elem = vaga_element.find('div', class_='d-none d-md-block')
             empresa = empresa_elem.get_text(strip=True) if empresa_elem else "N/A"
-            
-            # Tenta encontrar localização e data
-            # A localização e data podem estar em diferentes estruturas
-            # Vamos procurar por spans com classes específicas
-            
-            # Primeiro, tenta encontrar a localização (cidade - estado)
-            localizacao = "N/A"
-            cidade = "N/A"
-            estado = "N/A"
-            
-            # Procura por elementos que contenham " - PR" ou similar
-            local_elements = vaga_element.find_all(['div', 'span', 'p'], string=re.compile(r'.*\s+-\s+[A-Z]{2}'))
-            if local_elements:
-                localizacao = local_elements[0].get_text(strip=True)
-                # Tenta separar cidade e estado
-                if ' - ' in localizacao:
-                    partes = localizacao.split(' - ')
-                    if len(partes) == 2:
-                        cidade = partes[0].strip()
-                        estado = partes[1].strip()
-            
-            # Se não encontrou com a primeira estratégia, tenta outra abordagem
-            if localizacao == "N/A":
-                # Procura por padrões como "Maringá - PR"
-                text_elements = vaga_element.find_all(string=re.compile(r'[A-Za-zÀ-ú]+\s*-\s*[A-Z]{2}'))
-                for elem in text_elements:
-                    text = elem.strip()
-                    if ' - ' in text:
-                        localizacao = text
-                        partes = text.split(' - ')
-                        if len(partes) == 2:
-                            cidade = partes[0].strip()
-                            estado = partes[1].strip()
-                        break
+            empresa = self.fix_encoding(empresa)
             
             # Tenta encontrar a data
             data = "N/A"
@@ -72,6 +61,7 @@ class EmpregosMaringaScraper:
             date_elements = vaga_element.find_all(string=re.compile(r'\d{2}/\d{2}/\d{4}'))
             if date_elements:
                 data = date_elements[0].strip()
+                data = self.fix_encoding(data)
             
             # Se ainda não encontrou data, tenta outra abordagem
             if data == "N/A":
@@ -79,6 +69,7 @@ class EmpregosMaringaScraper:
                 data_elem = vaga_element.find('div', class_='text-nowrap ml-4')
                 if data_elem:
                     data = data_elem.get_text(strip=True)
+                    data = self.fix_encoding(data)
                     # Limpa a data se necessário
                     if ' ' in data:
                         data = data.split(' ')[0]  # Pega apenas a data, não o horário
@@ -89,23 +80,111 @@ class EmpregosMaringaScraper:
                 data_spans = vaga_element.find_all('span', string=re.compile(r'\d{2}/\d{2}/\d{4}'))
                 if data_spans:
                     data = data_spans[0].get_text(strip=True)
+                    data = self.fix_encoding(data)
+            
+            # Extrai URL usando o XPath específico
+            url = self.extract_url_with_xpath(vaga_element)
+            
+            # Extrai localização (cidade e estado)
+            cidade = "N/A"
+            estado = "N/A"
+            
+            # Procura por elementos que contenham " - PR" ou similar
+            local_elements = vaga_element.find_all(['div', 'span', 'p'], string=re.compile(r'.*\s+-\s+[A-Z]{2}'))
+            if local_elements:
+                localizacao = local_elements[0].get_text(strip=True)
+                localizacao = self.fix_encoding(localizacao)
+                # Tenta separar cidade e estado
+                if ' - ' in localizacao:
+                    partes = localizacao.split(' - ')
+                    if len(partes) == 2:
+                        cidade = self.fix_encoding(partes[0].strip())
+                        estado = self.fix_encoding(partes[1].strip())
+            
+            # Se não encontrou com a primeira estratégia, tenta outra abordagem
+            if cidade == "N/A":
+                # Procura por padrões como "Maringá - PR"
+                text_elements = vaga_element.find_all(string=re.compile(r'[A-Za-zÀ-ú]+\s*-\s*[A-Z]{2}'))
+                for elem in text_elements:
+                    text = elem.strip()
+                    text = self.fix_encoding(text)
+                    if ' - ' in text:
+                        partes = text.split(' - ')
+                        if len(partes) == 2:
+                            cidade = self.fix_encoding(partes[0].strip())
+                            estado = self.fix_encoding(partes[1].strip())
+                        break
             
             # Verifica se encontrou dados mínimos
-            if titulo == "N/A" and empresa == "N/A":
+            if empresa == "N/A" and not url:
                 return None
             
             return {
-                'titulo': titulo,
                 'empresa': empresa,
                 'cidade': cidade,
                 'estado': estado,
-                'localizacao': localizacao,
-                'data_publicacao': data
+                'data_publicacao': data,
+                'url': url
             }
             
         except Exception as e:
             print(f"Erro ao extrair dados da vaga: {e}")
             return None
+    
+    def extract_url_with_xpath(self, vaga_element) -> str:
+        """
+        Extrai a URL usando o XPath específico: //*[@id="id-546313"]/div/div[3]/a
+        """
+        try:
+            # Converte o elemento BeautifulSoup para lxml para usar XPath
+            # Primeiro, obtém o HTML do elemento
+            html_content = str(vaga_element)
+            
+            # Parse com lxml para usar XPath
+            parser = etree.HTMLParser()
+            tree = etree.fromstring(html_content, parser)
+            
+            # Tenta encontrar o link usando XPath
+            # Como o ID específico pode variar, procuramos por padrões semelhantes
+            # Primeiro tenta o XPath exato com ID específico
+            link_elements = tree.xpath('//*[@id="id-546313"]/div/div[3]/a')
+            
+            # Se não encontrou, tenta um padrão mais genérico
+            if not link_elements:
+                # Tenta encontrar qualquer link que possa ser de vaga
+                # Procura por links que contenham padrão de URL de vaga
+                link_elements = tree.xpath('//a[contains(@href, "vaga") or contains(@href, "job") or contains(@href, "emprego")]')
+            
+            # Se ainda não encontrou, tenta encontrar qualquer link dentro da estrutura
+            if not link_elements:
+                # Procura por links que possam estar em divs com classes específicas
+                link_elements = tree.xpath('//div[contains(@class, "d-flex")]//a | //div[contains(@class, "text-nowrap")]//a')
+            
+            if link_elements:
+                url = link_elements[0].get('href')
+                if url:
+                    # Se for URL relativa, converte para absoluta
+                    if url.startswith('/'):
+                        url = self.BASE_URL.rstrip('/') + url
+                    elif not url.startswith('http'):
+                        url = self.BASE_URL.rstrip('/') + '/' + url
+                    return url
+            
+            # Última tentativa: procura usando BeautifulSoup
+            link = vaga_element.find('a', href=re.compile(r'vaga|job|emprego'))
+            if link and link.get('href'):
+                url = link.get('href')
+                if url.startswith('/'):
+                    url = self.BASE_URL.rstrip('/') + url
+                elif not url.startswith('http'):
+                    url = self.BASE_URL.rstrip('/') + '/' + url
+                return url
+            
+            return "N/A"
+            
+        except Exception as e:
+            print(f"Erro ao extrair URL: {e}")
+            return "N/A"
     
     def scrape_page(self, page_number: int) -> List[Dict]:
         """
@@ -139,6 +218,9 @@ class EmpregosMaringaScraper:
                     print(f"Erro ao acessar página {page_number}: Status {response.status_code}")
                     return []
             
+            # Força o encoding para UTF-8
+            response.encoding = 'utf-8'
+            
             soup = BeautifulSoup(response.content, 'html.parser')
             
             # Tenta diferentes seletores para encontrar os elementos das vagas
@@ -150,7 +232,6 @@ class EmpregosMaringaScraper:
             # Estratégia 2: se não encontrou, procura por divs com classes específicas
             if not vaga_elements:
                 # Tenta encontrar divs que possam conter informações de vaga
-                # Baseado no conteúdo fornecido, as vagas parecem estar em divs estruturadas
                 possible_vaga_divs = soup.find_all('div', class_=re.compile(r'.*vaga.*|.*job.*|.*offer.*|.*anuncio.*|.*listing.*'))
                 if not possible_vaga_divs:
                     # Última tentativa: procura por divs que contenham padrões de texto específicos
@@ -169,13 +250,12 @@ class EmpregosMaringaScraper:
             # Se ainda não encontrou nada, tenta uma abordagem mais genérica
             if not vaga_elements:
                 # Procura por blocos que contenham informações de vaga
-                # Muitos sites usam article, section ou div comuns
                 for element in soup.find_all(['div', 'article', 'section']):
                     # Verifica se o elemento contém texto que parece ser de vaga
                     text = element.get_text()
                     if ' - PR' in text or re.search(r'\d{2}/\d{2}/\d{4}', text):
-                        # Verifica se não é um elemento muito grande (pode ser a página toda)
-                        if len(text) < 5000:  # Limita o tamanho para não pegar a página inteira
+                        # Verifica se não é um elemento muito grande
+                        if len(text) < 5000:
                             vaga_elements.append(element)
             
             print(f"Encontrados {len(vaga_elements)} elementos de vaga na página {page_number}")
@@ -188,8 +268,6 @@ class EmpregosMaringaScraper:
             
             # Se não encontrou vagas, tenta uma última abordagem baseada no conteúdo fornecido
             if not vagas and page_number == 1:
-                # O conteúdo fornecido mostra que as vagas são listadas em uma estrutura específica
-                # Vamos tentar parsear manualmente baseado no padrão observado
                 vagas = self.parse_from_text_content(soup)
             
             return vagas
@@ -201,47 +279,26 @@ class EmpregosMaringaScraper:
     def parse_from_text_content(self, soup: BeautifulSoup) -> List[Dict]:
         """
         Método alternativo para extrair dados baseado no padrão de texto observado.
-        Útil quando o HTML está mal estruturado.
         """
         vagas = []
         text = soup.get_text()
         
-        # Padrão: Título da vaga, seguido por empresa, localização e data
+        # Padrão: Empresa e Localização
         # Baseado no conteúdo fornecido:
-        # "Auxiliar de Estoque Bianchi Distribuidora Maringá - PR 19/06/2026"
-        # ou "Bianchi Distribuidora Auxiliar de Estoque Maringá - PR 19/06/2026"
+        # "Bianchi Distribuidora Maringá - PR 19/06/2026"
         
         # Vamos usar regex para encontrar padrões de vaga
         # Padrão: Texto com cidade - PR e data
-        pattern = r'(.*?)\s*([A-Za-zÀ-ú\s\.]+)\s*([A-Za-zÀ-ú]+\s*-\s*[A-Z]{2})\s*(\d{2}/\d{2}/\d{4})'
+        pattern = r'([A-Za-zÀ-ú\s\.]+)\s*([A-Za-zÀ-ú]+\s*-\s*[A-Z]{2})\s*(\d{2}/\d{2}/\d{4})'
         
         matches = re.findall(pattern, text)
         
         for match in matches:
-            # match: (titulo_ou_empresa, empresa_ou_titulo, localizacao, data)
-            # Precisamos determinar qual é o título e qual é a empresa
-            # Normalmente, o título é mais curto ou contém palavras-chave
-            part1, part2, localizacao, data = match
+            empresa, localizacao, data = match
             
-            # Determina qual é o título e qual é a empresa
-            # Palavras comuns em títulos de vaga
-            titulo_keywords = ['auxiliar', 'vendedor', 'analista', 'operador', 'consultor', 'estoquista', 
-                              'assistente', 'coordenador', 'gerente', 'técnico', 'zelador', 'balconista']
-            
-            titulo = ""
-            empresa = ""
-            
-            # Verifica se part1 parece ser título ou empresa
-            if any(keyword in part1.lower() for keyword in titulo_keywords):
-                titulo = part1.strip()
-                empresa = part2.strip()
-            elif any(keyword in part2.lower() for keyword in titulo_keywords):
-                titulo = part2.strip()
-                empresa = part1.strip()
-            else:
-                # Se não conseguir determinar, assume que o primeiro é título
-                titulo = part1.strip()
-                empresa = part2.strip() if part2 else "N/A"
+            empresa = self.fix_encoding(empresa.strip())
+            localizacao = self.fix_encoding(localizacao.strip())
+            data = self.fix_encoding(data.strip())
             
             # Extrai cidade e estado
             cidade = "N/A"
@@ -249,17 +306,26 @@ class EmpregosMaringaScraper:
             if ' - ' in localizacao:
                 partes = localizacao.split(' - ')
                 if len(partes) == 2:
-                    cidade = partes[0].strip()
-                    estado = partes[1].strip()
+                    cidade = self.fix_encoding(partes[0].strip())
+                    estado = self.fix_encoding(partes[1].strip())
             
-            if titulo or empresa:
+            # Tenta encontrar URL
+            url = "N/A"
+            link = soup.find('a', href=re.compile(r'vaga|job|emprego'))
+            if link and link.get('href'):
+                url = link.get('href')
+                if url.startswith('/'):
+                    url = self.BASE_URL.rstrip('/') + url
+                elif not url.startswith('http'):
+                    url = self.BASE_URL.rstrip('/') + '/' + url
+            
+            if empresa or url:
                 vagas.append({
-                    'titulo': titulo if titulo else "N/A",
-                    'empresa': empresa if empresa else "N/A",
+                    'empresa': empresa,
                     'cidade': cidade,
                     'estado': estado,
-                    'localizacao': localizacao,
-                    'data_publicacao': data
+                    'data_publicacao': data,
+                    'url': url
                 })
         
         return vagas
@@ -287,8 +353,8 @@ class EmpregosMaringaScraper:
         
         if all_vagas:
             df = pd.DataFrame(all_vagas)
-            # Remove duplicatas baseado no título + empresa + localização
-            df = df.drop_duplicates(subset=['titulo', 'empresa', 'localizacao'])
+            # Remove duplicatas baseado na empresa + cidade + data
+            df = df.drop_duplicates(subset=['empresa', 'cidade', 'data_publicacao'])
             return df
         else:
             return pd.DataFrame()
