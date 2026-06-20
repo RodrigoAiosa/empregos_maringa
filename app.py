@@ -48,16 +48,17 @@ def main():
             # Extrai os dados
             start_time = time.time()
             
-            # Simula o progresso
-            progress_bar = st.progress(0)
-            
             # Extrai os dados usando o scraper
             df = scraper.scrape_all_pages(max_pages)
             
-            progress_bar.progress(100)
             end_time = time.time()
             
             if not df.empty:
+                # Reordena as colunas conforme solicitado
+                # Colunas: empresa, cidade, estado, data_publicacao, url
+                column_order = ['empresa', 'cidade', 'estado', 'data_publicacao', 'url']
+                df = df[column_order]
+                
                 # Exibe estatísticas
                 col1, col2, col3 = st.columns(3)
                 with col1:
@@ -71,7 +72,7 @@ def main():
                 st.subheader("📊 Dados Extraídos")
                 
                 # Opção para baixar os dados
-                csv = df.to_csv(index=False)
+                csv = df.to_csv(index=False, encoding='utf-8-sig')
                 st.download_button(
                     label="📥 Baixar dados em CSV",
                     data=csv,
@@ -86,12 +87,11 @@ def main():
                     use_container_width=True,
                     hide_index=True,
                     column_config={
-                        "titulo": st.column_config.TextColumn("Título da Vaga"),
                         "empresa": st.column_config.TextColumn("Empresa"),
                         "cidade": st.column_config.TextColumn("Cidade"),
                         "estado": st.column_config.TextColumn("Estado"),
-                        "localizacao": st.column_config.TextColumn("Localização Completa"),
                         "data_publicacao": st.column_config.TextColumn("Data de Publicação"),
+                        "url": st.column_config.LinkColumn("URL da Vaga"),
                     }
                 )
                 
@@ -122,12 +122,15 @@ def main():
         st.subheader("📋 Exemplo dos dados a serem extraídos")
         
         exemplo_data = {
-            "Título da Vaga": ["Auxiliar de Estoque", "Corretor de Imóveis", "Balconista"],
             "Empresa": ["Bianchi Distribuidora", "Ferallyn Imoveis", "Holandesa Padaria"],
             "Cidade": ["Maringá", "Maringá", "Maringá"],
             "Estado": ["PR", "PR", "PR"],
-            "Localização Completa": ["Maringá - PR", "Maringá - PR", "Maringá - PR"],
-            "Data de Publicação": ["19/06/2026", "16/06/2026", "16/06/2026"]
+            "Data de Publicação": ["19/06/2026", "16/06/2026", "16/06/2026"],
+            "URL": [
+                "https://empregos.maringa.com/vaga/123",
+                "https://empregos.maringa.com/vaga/456",
+                "https://empregos.maringa.com/vaga/789"
+            ]
         }
         
         st.dataframe(
