@@ -4,9 +4,7 @@ import pandas as pd
 import time
 import re
 from typing import List, Dict, Optional, Callable
-from lxml import etree
 import unicodedata
-import json
 
 class EmpregosMaringaScraper:
     """
@@ -34,7 +32,6 @@ class EmpregosMaringaScraper:
             return text
         
         try:
-            # Tenta corrigir codificação comum
             if 'Ã¡' in text or 'Ã£' in text or 'Ã§' in text or 'Ã©' in text or 'Ã³' in text:
                 text_bytes = text.encode('latin-1')
                 text = text_bytes.decode('utf-8')
@@ -51,84 +48,75 @@ class EmpregosMaringaScraper:
         Extrai os dados de um único elemento de vaga.
         """
         try:
-            # Procura por título da vaga
-            title_elem = vaga_element.find(['h2', 'h3', 'h4', 'h5'])
-            titulo = title_elem.get_text(strip=True) if title_elem else "N/A"
-            titulo = self.fix_encoding(titulo)
-            
             # Procura por empresa
             empresa = "N/A"
             
-            # Tenta encontrar empresa por diferentes classes
-            empresa_classes = ['empresa', 'company', 'nome-empresa', 'company-name', 'nome-da-empresa']
-            for classe in empresa_classes:
-                empresa_elem = vaga_element.find('div', class_=re.compile(classe, re.I))
-                if empresa_elem:
-                    empresa = empresa_elem.get_text(strip=True)
-                    empresa = self.fix_encoding(empresa)
+            # Tenta encontrar empresa por diferentes padrões
+            empresa_patterns = [
+                r'<div[^>]*class="[^"]*empresa[^"]*"[^>]*>([^<]+)</div>',
+                r'<span[^>]*class="[^"]*company[^"]*"[^>]*>([^<]+)</span>',
+                r'<div[^>]*class="[^"]*nome-empresa[^"]*"[^>]*>([^<]+)</div>',
+            ]
+            
+            html_str = str(vaga_element)
+            for pattern in empresa_patterns:
+                match = re.search(pattern, html_str, re.I)
+                if match:
+                    empresa = self.fix_encoding(match.group(1).strip())
                     break
             
-            # Se não encontrou, procura por spans com texto que parece ser empresa
+            # Se não encontrou, procura por texto que parece empresa
             if empresa == "N/A":
-                for span in vaga_element.find_all(['span', 'div', 'p']):
-                    text = span.get_text(strip=True)
-                    # Verifica se parece um nome de empresa (não tem data, não tem UF)
-                    if (len(text) > 2 and len(text) < 100 and 
-                        not re.search(r'\d{2}/\d{2}/\d{4}', text) and 
-                        not re.search(r'[A-Z]{2}', text) and
-                        not re.search(r'R\$|Salário|Cidade|Estado', text, re.I)):
-                        empresa = self.fix_encoding(text)
+                text = vaga_element.get_text()
+                lines = text.split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if (len(line) > 3 and len(line) < 100 and 
+                        not re.search(r'\d{2}/\d{2}/\d{4}', line) and 
+                        not re.search(r'[A-Z]{2}', line) and
+                        not re.search(r'R\$|Salário|Cidade|Estado|N/A', line, re.I)):
+                        empresa = self.fix_encoding(line)
                         break
             
             # Procura por localização
             cidade = "N/A"
             estado = "N/A"
             
-            # Procura por padrão de localização: Cidade - UF ou Cidade – UF
             local_patterns = [
                 r'([A-Za-zÀ-ú\s]+)\s*[-–]\s*([A-Z]{2})',
                 r'([A-Za-zÀ-ú\s]+)\s*/\s*([A-Z]{2})',
                 r'([A-Za-zÀ-ú\s]+)\s*\(([A-Z]{2})\)'
             ]
             
+            text = vaga_element.get_text()
             for pattern in local_patterns:
-                local_elements = vaga_element.find_all(string=re.compile(pattern))
-                if local_elements:
-                    local_text = self.fix_encoding(local_elements[0].strip())
-                    match = re.search(pattern, local_text)
-                    if match:
-                        cidade = self.fix_encoding(match.group(1).strip())
-                        estado = self.fix_encoding(match.group(2).strip())
-                        break
+                match = re.search(pattern, text)
+                if match:
+                    cidade = self.fix_encoding(match.group(1).strip())
+                    estado = self.fix_encoding(match.group(2).strip())
+                    break
             
             # Procura por data
             data = "N/A"
-            
-            # Procura por padrões de data
             date_patterns = [
                 r'(\d{2}/\d{2}/\d{4})',
                 r'(\d{1,2}\s+de\s+[A-Za-zÀ-ú]+\s+de\s+\d{4})',
-                r'(\d{1,2}/\d{1,2}/\d{4})'
             ]
             
             for pattern in date_patterns:
-                date_elements = vaga_element.find_all(string=re.compile(pattern))
-                if date_elements:
-                    data_text = self.fix_encoding(date_elements[0].strip())
-                    match = re.search(pattern, data_text)
-                    if match:
-                        data = match.group(1) if len(match.groups()) > 0 else match.group(0)
-                        break
+                match = re.search(pattern, text)
+                if match:
+                    data = match.group(1) if len(match.groups()) > 0 else match.group(0)
+                    break
             
             # Extrai URL
             url = self.extract_url(vaga_element)
             
             # Se não encontrou dados mínimos, retorna None
-            if empresa == "N/A" and titulo == "N/A" and url == "N/A":
+            if empresa == "N/A" and url == "N/A":
                 return None
             
             return {
-                'titulo': titulo,
                 'empresa': empresa,
                 'cidade': cidade,
                 'estado': estado,
@@ -145,16 +133,28 @@ class EmpregosMaringaScraper:
         Extrai a URL da vaga.
         """
         try:
-            # Procura por links comuns
+            # Procura por links
             for link in vaga_element.find_all('a'):
                 href = link.get('href', '')
-                if href and any(keyword in href for keyword in ['vaga', 'job', 'emprego', 'detalhes', 'view']):
+                if href and any(keyword in href for keyword in ['vaga-empregos', 'vaga', 'job']):
                     url = href
                     if url.startswith('/'):
                         url = self.BASE_URL.rstrip('/') + url
                     elif not url.startswith('http'):
                         url = self.BASE_URL.rstrip('/') + '/' + url
                     return url
+            
+            # Se não encontrou link, procura no texto
+            text = str(vaga_element)
+            url_pattern = r'href="([^"]*vaga-empregos[^"]*)"'
+            match = re.search(url_pattern, text)
+            if match:
+                url = match.group(1)
+                if url.startswith('/'):
+                    url = self.BASE_URL.rstrip('/') + url
+                elif not url.startswith('http'):
+                    url = self.BASE_URL.rstrip('/') + '/' + url
+                return url
             
             return "N/A"
             
@@ -167,15 +167,13 @@ class EmpregosMaringaScraper:
         Scrape uma página específica de resultados.
         """
         try:
-            # Tenta diferentes formatos de URL
+            # URLs para tentar
             urls_to_try = [
                 f"{self.BASE_URL}vagas-de-emprego/page/{page_number}/",
                 f"{self.BASE_URL}?page={page_number}&vagas-de-emprego=1",
                 f"{self.BASE_URL}pagina/{page_number}/?vagas-de-emprego=1",
-                f"{self.BASE_URL}page/{page_number}/",
-                f"{self.BASE_URL}?page={page_number}",
                 f"{self.BASE_URL}?pagina={page_number}",
-                f"{self.BASE_URL}vagas/page/{page_number}/"
+                f"{self.BASE_URL}page/{page_number}/"
             ]
             
             response = None
@@ -199,26 +197,23 @@ class EmpregosMaringaScraper:
             
             vagas = []
             
-            # Estratégia 1: Procura por elementos de vaga usando diferentes seletores
-            selectors = [
-                ('div', {'class': re.compile(r'vaga|job|offer|listing|card|item', re.I)}),
-                ('div', {'id': re.compile(r'^id-\d+')}),
-                ('article', {}),
-                ('div', {'class': re.compile(r'post|entry|content', re.I)}),
-                ('li', {'class': re.compile(r'vaga|job', re.I)}),
-                ('div', {'class': re.compile(r'result|search-result', re.I)})
-            ]
-            
+            # Procura por elementos que contêm vagas
             vaga_elements = []
-            for tag, attrs in selectors:
-                try:
-                    if attrs:
-                        elements = soup.find_all(tag, attrs)
-                    else:
-                        elements = soup.find_all(tag)
-                    
+            
+            # Estratégia 1: Divs com ID id-XXXXX
+            id_pattern = re.compile(r'^id-\d+$')
+            elements_with_id = soup.find_all('div', id=id_pattern)
+            if elements_with_id:
+                vaga_elements = elements_with_id
+                print(f"Encontrados {len(vaga_elements)} elementos com ID")
+            
+            # Estratégia 2: Divs com classes comuns
+            if not vaga_elements:
+                class_patterns = ['vaga', 'job', 'offer', 'listing', 'item', 'post', 'entry']
+                for class_name in class_patterns:
+                    elements = soup.find_all('div', class_=re.compile(class_name, re.I))
                     if elements:
-                        # Filtra elementos que contêm padrões de vaga
+                        # Filtra elementos que parecem vagas
                         for elem in elements:
                             text = elem.get_text()
                             if (re.search(r'[A-Za-zÀ-ú]+\s*[-–]\s*[A-Z]{2}', text) or 
@@ -226,19 +221,38 @@ class EmpregosMaringaScraper:
                                 vaga_elements.append(elem)
                         if vaga_elements:
                             break
-                except:
-                    continue
             
-            print(f"Encontrados {len(vaga_elements)} elementos de vaga na página {page_number}")
+            # Estratégia 3: Artigos
+            if not vaga_elements:
+                articles = soup.find_all('article')
+                for article in articles:
+                    text = article.get_text()
+                    if (re.search(r'[A-Za-zÀ-ú]+\s*[-–]\s*[A-Z]{2}', text) and 
+                        re.search(r'\d{2}/\d{2}/\d{4}', text)):
+                        vaga_elements.append(article)
+            
+            # Estratégia 4: Qualquer div com padrão de texto
+            if not vaga_elements:
+                all_divs = soup.find_all('div')
+                for div in all_divs:
+                    text = div.get_text()
+                    if (re.search(r'[A-Za-zÀ-ú]+\s*[-–]\s*[A-Z]{2}', text) and 
+                        re.search(r'\d{2}/\d{2}/\d{4}', text) and
+                        len(text) < 2000):
+                        vaga_elements.append(div)
+                        if len(vaga_elements) > 20:  # Limita para não pegar muitos elementos
+                            break
+            
+            print(f"Processando {len(vaga_elements)} elementos na página {page_number}")
             
             for element in vaga_elements:
                 vaga_data = self.extract_vaga_data(element)
                 if vaga_data:
                     vagas.append(vaga_data)
             
-            # Se não encontrou nada, tenta extrair do texto da página
+            # Se não encontrou nada, tenta extrair do texto
             if not vagas:
-                print(f"Nenhuma vaga encontrada com os métodos padrão. Tentando extração de texto...")
+                print(f"Nenhuma vaga encontrada na página {page_number}. Tentando extração de texto...")
                 vagas = self.parse_from_text_content(soup)
             
             return vagas
@@ -251,37 +265,21 @@ class EmpregosMaringaScraper:
     
     def parse_from_text_content(self, soup: BeautifulSoup) -> List[Dict]:
         """
-        Método alternativo para extrair dados baseado no padrão de texto observado.
+        Método alternativo para extrair dados do texto.
         """
         vagas = []
         text = soup.get_text()
         
-        # Divide o texto em blocos
-        lines = text.split('\n')
-        current_block = []
+        # Divide em blocos
+        blocks = re.split(r'\n\s*\n', text)
         
-        for line in lines:
-            line = line.strip()
-            if not line:
+        for block in blocks:
+            if not block.strip():
                 continue
             
-            # Procura por padrões de vaga
-            if re.search(r'[A-Za-zÀ-ú]+\s*[-–]\s*[A-Z]{2}', line) or re.search(r'\d{2}/\d{2}/\d{4}', line):
-                current_block.append(line)
-            elif current_block and len(current_block) > 0:
-                # Verifica se o bloco anterior contém informações de vaga
-                block_text = ' '.join(current_block)
-                if re.search(r'[A-Za-zÀ-ú]+\s*[-–]\s*[A-Z]{2}', block_text) and re.search(r'\d{2}/\d{2}/\d{4}', block_text):
-                    vaga = self.extract_vaga_from_text(block_text)
-                    if vaga:
-                        vagas.append(vaga)
-                current_block = []
-        
-        # Processa o último bloco
-        if current_block:
-            block_text = ' '.join(current_block)
-            if re.search(r'[A-Za-zÀ-ú]+\s*[-–]\s*[A-Z]{2}', block_text) and re.search(r'\d{2}/\d{2}/\d{4}', block_text):
-                vaga = self.extract_vaga_from_text(block_text)
+            # Procura por padrão de localização e data
+            if re.search(r'[A-Za-zÀ-ú]+\s*[-–]\s*[A-Z]{2}', block) and re.search(r'\d{2}/\d{2}/\d{4}', block):
+                vaga = self.extract_vaga_from_text(block)
                 if vaga:
                     vagas.append(vaga)
         
@@ -304,42 +302,55 @@ class EmpregosMaringaScraper:
             date_match = re.search(r'(\d{2}/\d{2}/\d{4})', text)
             data = date_match.group(1) if date_match else "N/A"
             
-            # Extrai empresa (tenta pegar o texto antes da localização)
+            # Extrai empresa
             empresa = "N/A"
             if local_match:
-                # Pega o texto antes da localização
-                empresa_match = re.search(r'^([^\-–]+)', text[:local_match.start()].strip())
-                if empresa_match:
-                    empresa = self.fix_encoding(empresa_match.group(1).strip())
-            
-            if empresa == "N/A":
-                # Tenta encontrar um nome de empresa no texto
+                # Pega texto antes da localização
+                before = text[:local_match.start()].strip()
+                # Remove números e caracteres especiais
+                before = re.sub(r'\d+', '', before)
+                before = re.sub(r'[^\w\sÀ-ú]', ' ', before)
+                words = before.split()
+                if words:
+                    empresa = self.fix_encoding(' '.join(words[:3]))  # Pega até 3 palavras
+            else:
+                # Tenta encontrar nome no início do texto
                 words = text.split()
-                for word in words:
+                for i, word in enumerate(words):
                     if len(word) > 3 and not re.search(r'\d', word):
                         empresa = self.fix_encoding(word)
                         break
             
+            if empresa == "N/A" or len(empresa) < 2:
+                return None
+            
+            # Tenta encontrar URL
+            url = "N/A"
+            url_match = re.search(r'https?://[^\s<>"]+', text)
+            if url_match:
+                url = url_match.group(0)
+            
             return {
-                'titulo': 'N/A',
                 'empresa': empresa,
                 'cidade': cidade,
                 'estado': estado,
                 'data_publicacao': data,
-                'url': 'N/A'
+                'url': url
             }
             
         except Exception as e:
             print(f"Erro ao extrair vaga do texto: {e}")
             return None
     
-    def scrape_all_pages(self, max_pages: int = 100, progress_callback: Optional[Callable] = None) -> pd.DataFrame:
+    def scrape_all_pages(self, max_pages: int = 200, progress_callback: Optional[Callable] = None) -> pd.DataFrame:
         """
         Scrape todas as páginas especificadas e retorna um DataFrame.
         """
         all_vagas = []
         self.total_vagas = 0
         self.pagina_atual = 0
+        paginas_sem_vagas = 0
+        max_paginas_sem_vagas = 5  # Para após 5 páginas consecutivas sem vagas
         
         for page in range(1, max_pages + 1):
             self.pagina_atual = page
@@ -354,23 +365,26 @@ class EmpregosMaringaScraper:
             if vagas:
                 all_vagas.extend(vagas)
                 self.total_vagas += len(vagas)
-                print(f"Extraídas {len(vagas)} vagas da página {page}. Total acumulado: {self.total_vagas}")
+                paginas_sem_vagas = 0
+                print(f"Extraídas {len(vagas)} vagas da página {page}. Total: {self.total_vagas}")
                 
                 if progress_callback:
-                    progress_callback(page, max_pages, f"Extraídas {len(vagas)} vagas da página {page}")
+                    progress_callback(page, max_pages, f"Extraídas {len(vagas)} vagas. Total: {self.total_vagas}")
             else:
-                print(f"Nenhuma vaga encontrada na página {page}.")
-                # Se não encontrou nada, tenta a próxima página
-                if progress_callback:
-                    progress_callback(page, max_pages, f"Nenhuma vaga na página {page}")
+                paginas_sem_vagas += 1
+                print(f"Nenhuma vaga na página {page}. ({paginas_sem_vagas}/{max_paginas_sem_vagas})")
+                
+                if paginas_sem_vagas >= max_paginas_sem_vagas:
+                    print(f"Parando após {paginas_sem_vagas} páginas sem vagas.")
+                    break
             
-            # Delay para não sobrecarregar o servidor
+            # Delay entre requisições
             time.sleep(1)
         
         if all_vagas:
             df = pd.DataFrame(all_vagas)
             
-            # Remove duplicatas baseadas em empresa, cidade e data
+            # Remove duplicatas
             df = df.drop_duplicates(subset=['empresa', 'cidade', 'data_publicacao'], keep='first')
             
             # Tenta ordenar por data
@@ -381,7 +395,7 @@ class EmpregosMaringaScraper:
             except:
                 pass
             
-            # Salva em CSV para debug
+            # Salva em CSV
             df.to_csv('vagas_extraidas.csv', index=False, encoding='utf-8-sig')
             print(f"Total de vagas extraídas: {len(df)}")
             
