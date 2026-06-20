@@ -59,22 +59,20 @@ def main():
         with status_container:
             st.subheader("📊 Status da Extração")
             
-            # Cria colunas para métricas
-            col_status1, col_status2, col_status3 = st.columns(3)
-            status_text = st.empty()
+            # Apenas barra de progresso e texto de status
             progress_bar = st.progress(0)
+            status_text = st.empty()
+            vaga_count_text = st.empty()
             
             # Função de callback para atualizar o progresso
             def update_progress(current_page, total_pages, message):
                 progress = current_page / total_pages
                 progress_bar.progress(min(progress, 1.0))
-                
-                with col_status1:
-                    st.metric("Página Atual", f"{current_page}/{total_pages}")
-                with col_status2:
-                    st.metric("Progresso", f"{int(progress * 100)}%")
-                
                 status_text.info(f"📌 {message}")
+                
+                # Atualiza contagem de vagas
+                if hasattr(scraper, 'total_vagas'):
+                    vaga_count_text.info(f"📊 Total de vagas encontradas: {scraper.total_vagas}")
             
             try:
                 with st.spinner("🚀 Iniciando extração de dados..."):
@@ -88,6 +86,11 @@ def main():
                     )
                     
                     end_time = time.time()
+                    
+                    # Limpa os elementos de progresso
+                    progress_bar.empty()
+                    status_text.empty()
+                    vaga_count_text.empty()
                     
                     if not df.empty:
                         # Processa os dados com as funções utils
