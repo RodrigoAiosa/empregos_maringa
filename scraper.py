@@ -112,7 +112,7 @@ class EmpregosMaringaScraper:
             # Extrai URL
             url = self.extract_url(vaga_element)
             
-            # Se não encontrou dados mínimos, retorna None
+            # FIX #1: Aceita a vaga se tiver URL OU empresa (não precisa dos dois)
             if empresa == "N/A" and url == "N/A":
                 return None
             
@@ -133,10 +133,10 @@ class EmpregosMaringaScraper:
         Extrai a URL da vaga.
         """
         try:
-            # Procura por links
+            # FIX #2: Aceita qualquer link dentro do elemento de vaga, não só 'vaga-empregos'
             for link in vaga_element.find_all('a'):
                 href = link.get('href', '')
-                if href and any(keyword in href for keyword in ['vaga-empregos', 'vaga', 'job']):
+                if href and href not in ('#', '', '/'):
                     url = href
                     if url.startswith('/'):
                         url = self.BASE_URL.rstrip('/') + url
@@ -144,9 +144,9 @@ class EmpregosMaringaScraper:
                         url = self.BASE_URL.rstrip('/') + '/' + url
                     return url
             
-            # Se não encontrou link, procura no texto
+            # Busca qualquer href no HTML do elemento
             text = str(vaga_element)
-            url_pattern = r'href="([^"]*vaga-empregos[^"]*)"'
+            url_pattern = r'href="([^"#][^"]*)"'
             match = re.search(url_pattern, text)
             if match:
                 url = match.group(1)
@@ -231,7 +231,7 @@ class EmpregosMaringaScraper:
                         re.search(r'\d{2}/\d{2}/\d{4}', text)):
                         vaga_elements.append(article)
             
-            # Estratégia 4: Qualquer div com padrão de texto
+            # FIX #3: Estratégia 4 sem limite arbitrário de 20 elementos
             if not vaga_elements:
                 all_divs = soup.find_all('div')
                 for div in all_divs:
@@ -240,9 +240,26 @@ class EmpregosMaringaScraper:
                         re.search(r'\d{2}/\d{2}/\d{4}', text) and
                         len(text) < 2000):
                         vaga_elements.append(div)
-                        if len(vaga_elements) > 20:  # Limita para não pegar muitos elementos
-                            break
+                # REMOVIDO: limite de 20 que cortava as vagas da página
             
+            # Estratégia 5: Linhas/células de tabela
+            if not vaga_elements:
+                rows = soup.find_all('tr')
+                for row in rows:
+                    text = row.get_text()
+                    if (re.search(r'[A-Za-zÀ-ú]+\s*[-–]\s*[A-Z]{2}', text) and
+                        re.search(r'\d{2}/\d{2}/\d{4}', text)):
+                        vaga_elements.append(row)
+
+            # Estratégia 6: Itens de lista (<li>)
+            if not vaga_elements:
+                items = soup.find_all('li')
+                for item in items:
+                    text = item.get_text()
+                    if (re.search(r'[A-Za-zÀ-ú]+\s*[-–]\s*[A-Z]{2}', text) and
+                        re.search(r'\d{2}/\d{2}/\d{4}', text)):
+                        vaga_elements.append(item)
+
             print(f"Processando {len(vaga_elements)} elementos na página {page_number}")
             
             for element in vaga_elements:
@@ -250,6 +267,16 @@ class EmpregosMaringaScraper:
                 if vaga_data:
                     vagas.append(vaga_data)
             
+            # FIX #4: Remove duplicatas dentro da página pelo URL antes de retornar
+            seen_urls = set()
+            vagas_unicas = []
+            for v in vagas:
+                key = v.get('url', 'N/A')
+                if key == 'N/A' or key not in seen_urls:
+                    seen_urls.add(key)
+                    vagas_unicas.append(v)
+            vagas = vagas_unicas
+
             # Se não encontrou nada, tenta extrair do texto
             if not vagas:
                 print(f"Nenhuma vaga encontrada na página {page_number}. Tentando extração de texto...")
@@ -384,8 +411,13 @@ class EmpregosMaringaScraper:
         if all_vagas:
             df = pd.DataFrame(all_vagas)
             
-            # Remove duplicatas
-            df = df.drop_duplicates(subset=['empresa', 'cidade', 'data_publicacao'], keep='first')
+            # FIX #5: Remove duplicatas APENAS pela URL (não por empresa+cidade+data)
+            # Vagas sem URL (N/A) são mantidas normalmente
+            df_com_url = df[df['url'] != 'N/A'].drop_duplicates(subset=['url'], keep='first')
+            df_sem_url = df[df['url'] == 'N/A'].drop_duplicates(
+                subset=['empresa', 'cidade', 'data_publicacao'], keep='first'
+            )
+            df = pd.concat([df_com_url, df_sem_url], ignore_index=True)
             
             # Tenta ordenar por data
             try:
