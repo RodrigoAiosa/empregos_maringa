@@ -427,8 +427,12 @@ class EmpregosMaringaScraper:
             except:
                 pass
             
-            # Salva em CSV
-            df.to_csv('vagas_extraidas.csv', index=False, encoding='utf-8-sig')
+            # Salva em Excel formatado
+            try:
+                from csv_manager import CSVManager
+                CSVManager().save_dataframe(df)
+            except Exception:
+                df.to_excel('vagas_extraidas.xlsx', index=False)
             print(f"Total de vagas extraídas: {len(df)}")
             
             if progress_callback:
