@@ -123,12 +123,12 @@ def main():
                         # Dados
                         st.subheader("📊 Dados Extraídos")
                         
-                        csv_data, filename = csv_manager.get_download_data(df)
+                        xlsx_data, filename = csv_manager.get_download_data(df)
                         st.download_button(
-                            label="📥 Baixar CSV",
-                            data=csv_data,
+                            label="📥 Baixar Excel",
+                            data=xlsx_data,
                             file_name=filename,
-                            mime="text/csv",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             use_container_width=True
                         )
                         
