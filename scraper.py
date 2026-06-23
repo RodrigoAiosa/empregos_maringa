@@ -19,7 +19,8 @@ class EmpregosMaringaScraper:
         })
         self.total_vagas = 0
         self.pagina_atual = 0
-    
+        self._pagination_url = None  # URL format descoberto com sucesso
+
     def fix_encoding(self, text: str) -> str:
         if not text:
             return text
@@ -107,22 +108,57 @@ class EmpregosMaringaScraper:
             print(f"Erro ao extrair vaga: {e}")
             return None
 
+    def _detect_pagination_url(self, soup: BeautifulSoup, page_number: int) -> Optional[str]:
+        """Detecta o formato de paginação real do site analisando os links da página."""
+        for a in soup.find_all('a', href=True):
+            href = a['href']
+            for pattern in [
+                r'/page/(\d+)/',
+                r'[?&]page=(\d+)',
+                r'[?&]pagina=(\d+)',
+                r'[?&]pg=(\d+)',
+                r'[?&]p=(\d+)',
+            ]:
+                m = re.search(pattern, href)
+                if m:
+                    num = int(m.group(1))
+                    if num > 1:
+                        # Reconstruir template da URL
+                        template = href.replace(m.group(0), m.group(0).replace(str(num), '{page}'))
+                        if not template.startswith('http'):
+                            template = self.BASE_URL.rstrip('/') + template
+                        print(f"Formato de paginação detectado: {template}")
+                        return template
+        return None
+
+    def _build_page_urls(self, page_number: int) -> List[str]:
+        """Retorna lista de URLs a tentar para uma página, priorizando o formato já descoberto."""
+        if self._pagination_url:
+            return [self._pagination_url.replace('{page}', str(page_number))]
+
+        return [
+            f"{self.BASE_URL}vagas-de-emprego/page/{page_number}/",
+            f"{self.BASE_URL}page/{page_number}/",
+            f"{self.BASE_URL}?page={page_number}",
+            f"{self.BASE_URL}?pagina={page_number}",
+            f"{self.BASE_URL}?pg={page_number}",
+            f"{self.BASE_URL}?p={page_number}",
+            f"{self.BASE_URL}pagina/{page_number}/",
+        ]
+
     def scrape_page(self, page_number: int) -> List[Dict]:
         try:
-            urls_to_try = [
-                f"{self.BASE_URL}vagas-de-emprego/page/{page_number}/",
-                f"{self.BASE_URL}?page={page_number}&vagas-de-emprego=1",
-                f"{self.BASE_URL}pagina/{page_number}/?vagas-de-emprego=1",
-                f"{self.BASE_URL}?pagina={page_number}",
-                f"{self.BASE_URL}page/{page_number}/",
-            ]
+            urls_to_try = self._build_page_urls(page_number)
 
             response = None
+            used_url = None
             for url in urls_to_try:
                 try:
                     print(f"Tentando URL: {url}")
-                    response = self.session.get(url, timeout=10)
-                    if response.status_code == 200:
+                    r = self.session.get(url, timeout=15)
+                    if r.status_code == 200:
+                        response = r
+                        used_url = url
                         print(f"URL com sucesso: {url}")
                         break
                 except Exception as e:
@@ -134,6 +170,12 @@ class EmpregosMaringaScraper:
 
             response.encoding = 'utf-8'
             soup = BeautifulSoup(response.content, 'html.parser')
+
+            # Detectar formato de paginação automaticamente na primeira página
+            if page_number == 1 and not self._pagination_url:
+                detected = self._detect_pagination_url(soup, page_number)
+                if detected:
+                    self._pagination_url = detected
 
             # --- Detecta estrutura do site automaticamente ---
             vaga_elements = []
@@ -148,7 +190,6 @@ class EmpregosMaringaScraper:
             # Estratégia 2: qualquer tag com classe contendo 'vaga'
             if not vaga_elements:
                 found = soup.find_all(class_=re.compile(r'\bvaga\b', re.I))
-                # Pega apenas folhas (elementos sem filhos do mesmo tipo)
                 vaga_elements = [e for e in found if not e.find(class_=re.compile(r'\bvaga\b', re.I))]
                 if vaga_elements:
                     print(f"Estrategia 2 (classe vaga): {len(vaga_elements)} elementos")
@@ -186,7 +227,6 @@ class EmpregosMaringaScraper:
             if not vaga_elements:
                 candidates = []
                 for div in soup.find_all('div'):
-                    # Só divs "folha" (sem divs filhos) - evita pegar containers
                     if div.find('div'):
                         continue
                     t = div.get_text(strip=True)
@@ -210,7 +250,11 @@ class EmpregosMaringaScraper:
             seen = set()
             vagas_unicas = []
             for v in vagas:
-                key = v['url'] if v['url'] != 'N/A' else f"{v['empresa']}|{v['cidade']}|{v['data_publicacao']}"
+                # Chave mais específica para evitar falsos positivos
+                if v['url'] != 'N/A':
+                    key = v['url']
+                else:
+                    key = f"{v['empresa']}|{v['cidade']}|{v['data_publicacao']}|{v.get('titulo', '')}"
                 if key not in seen:
                     seen.add(key)
                     vagas_unicas.append(v)
@@ -275,9 +319,8 @@ class EmpregosMaringaScraper:
         self.total_vagas = 0
         self.pagina_atual = 0
         paginas_sem_vagas = 0
-        max_paginas_sem_vagas = 5
+        max_paginas_sem_vagas = 10  # aumentado de 5 para 10
 
-        # Chave única por vaga para dedup em tempo real
         seen_global = set()
 
         for page in range(1, max_pages + 1):
@@ -292,7 +335,10 @@ class EmpregosMaringaScraper:
             if vagas:
                 novas = 0
                 for v in vagas:
-                    key = v['url'] if v['url'] != 'N/A' else f"{v['empresa']}|{v['cidade']}|{v['data_publicacao']}"
+                    if v['url'] != 'N/A':
+                        key = v['url']
+                    else:
+                        key = f"{v['empresa']}|{v['cidade']}|{v['data_publicacao']}|{v.get('titulo', '')}"
                     if key not in seen_global:
                         seen_global.add(key)
                         all_vagas.append(v)
@@ -308,7 +354,7 @@ class EmpregosMaringaScraper:
                 paginas_sem_vagas += 1
                 print(f"Nenhuma vaga na pagina {page}. ({paginas_sem_vagas}/{max_paginas_sem_vagas})")
                 if paginas_sem_vagas >= max_paginas_sem_vagas:
-                    print(f"Parando apos {paginas_sem_vagas} paginas sem vagas.")
+                    print(f"Parando apos {paginas_sem_vagas} paginas sem vagas consecutivas.")
                     break
 
             time.sleep(1)
@@ -325,8 +371,12 @@ class EmpregosMaringaScraper:
 
             try:
                 from csv_manager import CSVManager
-                CSVManager().save_dataframe(df)
-            except Exception:
+                success, message = CSVManager().save_dataframe(df)
+                if not success:
+                    print(f"Aviso ao salvar: {message}")
+                    df.to_excel('vagas_extraidas.xlsx', index=False)
+            except Exception as e:
+                print(f"Erro ao salvar com CSVManager: {e}")
                 df.to_excel('vagas_extraidas.xlsx', index=False)
 
             print(f"Total de vagas salvas: {len(df)}")
