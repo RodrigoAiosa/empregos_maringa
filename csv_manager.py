@@ -1,6 +1,7 @@
 """
 Módulo para gerenciar operações com arquivos Excel/CSV
 """
+import streamlit as st
 import pandas as pd
 import os
 from typing import Optional, Tuple
@@ -25,7 +26,6 @@ class CSVManager:
         ws = wb.active
         ws.title = "Vagas"
 
-        # Estilos
         header_font = Font(name='Arial', bold=True, color='FFFFFF', size=11)
         header_fill = PatternFill('solid', start_color='2E4057')
         header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
@@ -34,7 +34,6 @@ class CSVManager:
         thin = Side(style='thin', color='CCCCCC')
         border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-        # Mapeamento de colunas para nomes amigáveis
         col_names = {
             'empresa': 'Empresa',
             'cidade': 'Cidade',
@@ -46,7 +45,6 @@ class CSVManager:
         columns = [c for c in col_names if c in df.columns]
         headers = [col_names[c] for c in columns]
 
-        # Cabeçalho
         for col_idx, header in enumerate(headers, start=1):
             cell = ws.cell(row=1, column=col_idx, value=header)
             cell.font = header_font
@@ -56,7 +54,6 @@ class CSVManager:
 
         ws.row_dimensions[1].height = 30
 
-        # Linhas de dados
         fill_alt = PatternFill('solid', start_color='F0F4F8')
         fill_normal = PatternFill('solid', start_color='FFFFFF')
 
@@ -76,7 +73,6 @@ class CSVManager:
                     cell.alignment = cell_align
             ws.row_dimensions[row_idx].height = 18
 
-        # Larguras das colunas
         col_widths = {
             'empresa': 35,
             'cidade': 22,
@@ -87,10 +83,7 @@ class CSVManager:
         for col_idx, col_name in enumerate(columns, start=1):
             ws.column_dimensions[get_column_letter(col_idx)].width = col_widths.get(col_name, 20)
 
-        # Congela cabeçalho
         ws.freeze_panes = 'A2'
-
-        # Auto-filtro
         ws.auto_filter.ref = ws.dimensions
 
         return wb
@@ -115,7 +108,6 @@ class CSVManager:
             load_file = filename or self.filename
             
             if not os.path.exists(load_file):
-                # Tenta o nome antigo .csv também
                 csv_file = load_file.replace('.xlsx', '.csv')
                 if os.path.exists(csv_file):
                     df = pd.read_csv(csv_file)
@@ -208,6 +200,3 @@ def create_csv_manager_widgets():
 def save_current_dataframe(df: pd.DataFrame) -> Tuple[bool, str]:
     csv_manager = CSVManager()
     return csv_manager.save_dataframe(df)
-
-
-import streamlit as st
