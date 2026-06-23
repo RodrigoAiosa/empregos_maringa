@@ -17,7 +17,6 @@ def main():
     Este aplicativo extrai informações de vagas de emprego do site [empregos.maringa.com](https://empregos.maringa.com/)
     """)
     
-    # Inicializa o estado da sessão
     if 'loaded_df' not in st.session_state:
         st.session_state['loaded_df'] = None
     if 'df' not in st.session_state:
@@ -25,7 +24,6 @@ def main():
     
     csv_manager = CSVManager()
     
-    # Sidebar para configurações
     with st.sidebar:
         st.header("⚙️ Configurações")
         
@@ -45,10 +43,8 @@ def main():
         
         st.divider()
         
-        # Widgets simplificados de gerenciamento de CSV
         create_csv_manager_widgets()
         
-        # Botão para salvar os dados atuais
         if st.session_state['df'] is not None and not st.session_state['df'].empty:
             st.divider()
             if st.button("💾 Salvar CSV", use_container_width=True):
@@ -61,7 +57,6 @@ def main():
         st.divider()
         st.caption("Desenvolvido com ❤️ usando Streamlit")
     
-    # Área principal
     if extract_button:
         status_container = st.container()
         
@@ -97,18 +92,19 @@ def main():
                     vaga_count_text.empty()
                     
                     if not df.empty:
-                        # Remove coluna título se existir
                         if 'título' in df.columns:
                             df = df.drop('título', axis=1)
                         if 'titulo' in df.columns:
                             df = df.drop('titulo', axis=1)
                         
                         st.session_state['df'] = df
-                        csv_manager.save_dataframe(df)
+
+                        success, save_message = csv_manager.save_dataframe(df)
+                        if success:
+                            st.success(f"✅ Extração concluída! {len(df)} vagas encontradas e salvas.")
+                        else:
+                            st.warning(f"✅ Extração concluída com {len(df)} vagas, mas houve um problema ao salvar: {save_message}")
                         
-                        st.success(f"✅ Extração concluída! {len(df)} vagas encontradas.")
-                        
-                        # Métricas
                         col1, col2, col3, col4 = st.columns(4)
                         with col1:
                             st.metric("Total de Vagas", len(df))
@@ -120,7 +116,6 @@ def main():
                             empresas_unicas = df['empresa'].nunique() if 'empresa' in df.columns else 0
                             st.metric("Empresas", empresas_unicas)
                         
-                        # Dados
                         st.subheader("📊 Dados Extraídos")
                         
                         xlsx_data, filename = csv_manager.get_download_data(df)
@@ -145,7 +140,6 @@ def main():
                             }
                         )
                         
-                        # Estatísticas
                         if 'cidade' in df.columns and 'empresa' in df.columns:
                             st.subheader("📈 Estatísticas")
                             col_est1, col_est2 = st.columns(2)
@@ -168,11 +162,9 @@ def main():
                 st.code(traceback.format_exc())
     
     else:
-        # Mostra dados carregados ou estado inicial
         if st.session_state['df'] is not None and not st.session_state['df'].empty:
             df = st.session_state['df']
             
-            # Remove coluna título se existir
             if 'título' in df.columns:
                 df = df.drop('título', axis=1)
             if 'titulo' in df.columns:
@@ -195,7 +187,6 @@ def main():
         else:
             st.info("👆 Clique em 'Iniciar Extração' ou carregue um CSV salvo.")
             
-            # Exemplo
             st.subheader("📋 Exemplo")
             exemplo = {
                 "Empresa": ["Bianchi Distribuidora", "Ferallyn Imoveis"],
